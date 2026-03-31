@@ -1,4 +1,4 @@
-import os # Make sure this is at the top of your file!
+import os
 from dotenv import load_dotenv
 
 from typing import TypedDict, Annotated, Union, Optional
@@ -76,16 +76,21 @@ def summarize_ticket_node(state: AnalyzerState) -> dict:
 
     return {"clean_summary": clean_summary}
 
+
 # Node 2: The Database Retriever
 embeddings = GoogleGenerativeAIEmbeddings(
     model="gemini-embedding-001",
     output_dimensionality=768
 )
-connection_string = os.getenv("PGVECTOR_URL")
+
+# 💡 THE FIX: Dynamically construct the psycopg connection string
+raw_connection_string = os.getenv("DATABASE_URL", "")
+pgvector_connection_string = raw_connection_string.replace("postgresql://", "postgresql+psycopg://")
+
 vector_store = PGVector(
     embeddings=embeddings,
     collection_name="historical_tickets",
-    connection=connection_string,
+    connection=pgvector_connection_string,
     use_jsonb=True
 )
 
@@ -108,21 +113,39 @@ def retrieve_historical_context(state: AnalyzerState) -> dict:
     past_solutions = [doc.page_content for doc in result]
     return {"past_solutions": past_solutions}
 
+
 from langgraph.graph import StateGraph, START, END
 
 # 4. FINAL NODE: The Solution Generator
-
 solution_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
 
+# 💡 THE UPGRADE: Added strict Topic and Formatting Guardrails
 solution_prompt = ChatPromptTemplate.from_messages([
-    ("system", """You are a Senior IT Solutions Architect.
-    Analyze the incoming ticket summary and review how similar issues were solved in the past.
-    Provide a clear, step-by-step resolution plan to fix the current issue.
-    If the past solutions are irrelevant, state that and provide general troubleshooring steps."""),
-    ("human", "Current Issue Summary:{summary}\n\nPast Successful Solutions:\n{past_solutions}")
+    ("system", """You are a strictly professional Senior IT Solutions Architect.
+    
+    CRITICAL GUARDRAILS:
+    1. You must ONLY answer IT, networking, software, or hardware-related queries. 
+    2. If the user's ticket is a joke, spam, or non-IT related, reply EXACTLY with: "REJECTED: Non-IT related query detected." Do not explain further.
+    3. Do NOT make up hypothetical server names or IP addresses. Only use what is provided in the context.
+    
+    FORMATTING RULES:
+    You must format your response exactly like this:
+    
+    ### 🎯 Issue Analysis
+    [1-2 sentences explaining the root cause based on the summary]
+    
+    ### 🛠️ Proposed Resolution Steps
+    1. [Step 1]
+    2. [Step 2]
+    3. [Step 3]
+    
+    ### 📚 Historical Context
+    [Briefly mention if past tickets helped form this solution, or state if no relevant history was found.]
+    """),
+    ("human", "Current Issue Summary: {summary}\n\nPast Successful Solutions:\n{past_solutions}")
 ])
 
-solution_chain = solution_prompt | solution_llm| StrOutputParser()
+solution_chain = solution_prompt | solution_llm | StrOutputParser()
 
 def generate_solution_node(state: AnalyzerState) -> dict:
     """Generates a proposed plan using Gemini Pro."""
@@ -139,6 +162,7 @@ def generate_solution_node(state: AnalyzerState) -> dict:
     return {"proposed_plan": final_plan}
 
 
+# GRAPH COMPILATION
 workflow = StateGraph(AnalyzerState)
 
 workflow.add_node("summarize_ticket", summarize_ticket_node)
@@ -151,6 +175,7 @@ workflow.add_edge("retrieve_context", "generate_solution")
 workflow.add_edge("generate_solution", END)
 
 # 1. Define the connection pool for the checkpointer
+# Note: The checkpointer still uses the raw DATABASE_URL natively
 pool_url = os.getenv("DATABASE_URL")
 pool = ConnectionPool(
     conninfo=pool_url,
@@ -162,7 +187,6 @@ pool = ConnectionPool(
 checkpointer = PostgresSaver(pool)
 
 # 3. Compile the graph, attaching the checkpointer and setting the interrupt
-# We tell it to pause BEFORE running the 'generate_solution' node.
 checkpointer.setup() # This creates the necessary state tables in your DB automatically!
 
 app_graph = workflow.compile(
