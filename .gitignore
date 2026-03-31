@@ -1,0 +1,14 @@
+# Security
+.env
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Local Database/Logs
+*.log

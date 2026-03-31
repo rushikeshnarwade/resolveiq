@@ -1,8 +1,7 @@
-# ResolveIQ
+Prerequisites: Docker (for PostgreSQL) and Python.
 
-AI-powered ServiceNow Incident & Change Request Analyzer
+Setup: The command to install dependencies (pip install -r requirements.txt).
 
-## Features
-- Learns from past requests
-- Suggests resolution strategies
-- Integrates with ServiceNow
+Environment Variables: A list of the keys needed in the .env file (but do not put the actual keys in the README).
+
+Startup Command: How to boot the server (uvicorn main:app --reload).
