@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import requests
 from typing import List
@@ -6,9 +9,7 @@ import logging
 from graph import IncidentTicket, ChangeRequestTicket, app_graph
 from models.resolved_ticket_model import ResolvedTicketPayload
 from batch_ingest import process_batch
-from dotenv import load_dotenv
 
-load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="ServiceNow LangGraph Analyzer")
