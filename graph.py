@@ -67,31 +67,35 @@ class AnalyzerState(TypedDict):
 # LLM NODES
 # ----------------------------
 
-summarizer_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
-summary_prompt = ChatPromptTemplate.from_messages([
-    (
-        "system",
-        "Extract the core technical issue from the ServiceNow ticket data. "
-        "Ignore noise. Output a dense brief technical summary."
-    ),
-    ("human", "Short Description: {short_desc}\n\nFull Description: {full_desc}")
-])
-summarization_chain = summary_prompt | summarizer_llm | StrOutputParser()
+@lru_cache(maxsize=1)
+def _get_summarization_chain():
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+    prompt = ChatPromptTemplate.from_messages([
+        (
+            "system",
+            "Extract the core technical issue from the ServiceNow ticket data. "
+            "Ignore noise. Output a dense brief technical summary."
+        ),
+        ("human", "Short Description: {short_desc}\n\nFull Description: {full_desc}")
+    ])
+    return prompt | llm | StrOutputParser()
 
 
 def summarize_ticket_node(state: AnalyzerState) -> dict:
     ticket = state["ticket"]
     full_desc = ticket.description or ""
-    clean_summary = summarization_chain.invoke({
+    clean_summary = _get_summarization_chain().invoke({
         "short_desc": ticket.short_description,
         "full_desc": full_desc
     })
     return {"clean_summary": clean_summary}
 
 
-solution_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
-solution_prompt = ChatPromptTemplate.from_messages([
-    ("system", """You are a strictly professional Senior IT Solutions Architect.
+@lru_cache(maxsize=1)
+def _get_solution_chain():
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are a strictly professional Senior IT Solutions Architect.
 
 CRITICAL GUARDRAILS:
 1. You must ONLY answer IT, networking, software, or hardware-related queries.
@@ -113,9 +117,9 @@ You must format your response exactly like this:
 ### 📚 Historical Context
 [Briefly mention if past tickets helped form this solution, or state if no relevant history was found.]
 """),
-    ("human", "Current Issue Summary: {summary}\n\nPast Successful Solutions:\n{past_solutions}")
-])
-solution_chain = solution_prompt | solution_llm | StrOutputParser()
+        ("human", "Current Issue Summary: {summary}\n\nPast Successful Solutions:\n{past_solutions}")
+    ])
+    return prompt | llm | StrOutputParser()
 
 
 def generate_solution_node(state: AnalyzerState) -> dict:
@@ -123,7 +127,7 @@ def generate_solution_node(state: AnalyzerState) -> dict:
     if not formatted_past_solutions:
         formatted_past_solutions = "No relevant past solutions found in the database."
 
-    final_plan = solution_chain.invoke({
+    final_plan = _get_solution_chain().invoke({
         "summary": state["clean_summary"],
         "past_solutions": formatted_past_solutions
     })
