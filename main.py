@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, BackgroundTasks
 import logging
 from models.ticket_models import IncidentTicket, ChangeRequestTicket, ResolvedTicket
 from graph.workflow import workflow
+from utils import process_tickets
 
 
 logging.basicConfig(level=logging.INFO)
