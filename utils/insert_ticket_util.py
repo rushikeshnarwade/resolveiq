@@ -1,50 +1,13 @@
-import os
 from functools import lru_cache
 from langchain_core.documents import Document
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_postgres.vectorstores import PGVector
-from dotenv import load_dotenv
+from utils import get_vector_store
 import logging
 
-load_dotenv()
-
-
-# ==========================================
-# LAZY INITIALIZATION HELPERS
-# ==========================================
-
-def _get_pgvector_connection_string() -> str:
-    """Derive psycopg connection string from DATABASE_URL."""
-    raw = os.getenv("DATABASE_URL")
-    if not raw:
-        raise RuntimeError("DATABASE_URL is not set")
-    if raw.startswith("postgresql://"):
-        return raw.replace("postgresql://", "postgresql+psycopg://", 1)
-    return raw
-
-
 @lru_cache(maxsize=1)
-def _get_embeddings() -> GoogleGenerativeAIEmbeddings:
-    return GoogleGenerativeAIEmbeddings(
-        model="gemini-embedding-001",
-        output_dimensionality=768,
-    )
-
-
-@lru_cache(maxsize=1)
-def _get_vector_store() -> PGVector:
-    return PGVector(
-        embeddings=_get_embeddings(),
-        collection_name="historical_tickets",
-        connection=_get_pgvector_connection_string(),
-        use_jsonb=True,
-    )
-
-
-@lru_cache(maxsize=1)
-def _get_summarization_chain():
+def _get_resolved_ticket_summarization_chain():
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
     prompt = ChatPromptTemplate.from_messages([
         ("system",
@@ -58,20 +21,15 @@ def _get_summarization_chain():
     ])
     return prompt | llm | StrOutputParser()
 
-
-# ==========================================
-# THE BATCH INGESTION FUNCTION
-# ==========================================
-
-async def process_batch(resolved_tickets: list):
+def process_tickets(resolved_tickets: list):
     """
     Takes a list of validated Pydantic ticket models, summarizes them,
     and upserts them into the pgvector database.
     """
     logging.info(f"🚀 Starting batch ingestion for {len(resolved_tickets)} tickets...")
 
-    summarization_chain = _get_summarization_chain()
-    vector_store = _get_vector_store()
+    summarization_chain = _get_resolved_ticket_summarization_chain()
+    vector_store = get_vector_store()
 
     documents_to_insert = []
     document_ids = []
@@ -100,7 +58,7 @@ async def process_batch(resolved_tickets: list):
         document_ids.append(ticket.sys_id)
 
         logging.info(f"✅ {ticket.number} summarized.")
-
+    
     logging.info("💾 Saving embeddings to database...")
     vector_store.add_documents(documents=documents_to_insert, ids=document_ids)
-    logging.info("🎉 Batch ingestion complete!")
+    logging.info("🎉 Ingestion complete!")
